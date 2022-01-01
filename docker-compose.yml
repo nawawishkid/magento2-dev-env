@@ -1,0 +1,108 @@
+version: "3.8"
+
+services:
+  web:
+    # See https://devdocs.magento.com/cloud/docker/docker-containers-service.html#web-container
+    build: ./nginx
+    expose:
+      - "80"
+    environment:
+            # VIRTUAL_HOST: museonthemove-clone.local # For jwilder/nginx-proxy
+      FPM_HOST: "${WEB_PHPFPM_HOST:-php-fpm}"
+      FPM_PORT: "${WEB_PHPFPM_PORT:-9000}"
+      MAGENTO_RUN_MODE: "${MAGENTO_RUN_MODE:-production}"
+      DEBUG: "${WEB_DEBUG:-false}"
+      SERVER_NAME: "${WEB_SERVER_NAME:-museonthemove.local}"
+    volumes:
+      - ${MAGENTO_ROOT}:/app
+
+  php-fpm:
+    # See https://devdocs.magento.com/cloud/docker/docker-containers-service.html#fpm-container
+    # image: magento/magento-cloud-docker-php:7.4-fpm-1.3.0
+    build: ./php
+    environment:
+      MAGENTO_RUN_MODE: "${MAGENTO_RUN_MODE:-production}"
+      DEBUG: "${PHP_DEBUG:-false}"
+      PHP_MEMORY_LIMIT: "${PHP_MEMORY_LIMIT:-2G}"
+      COMPOSER_AUTH: |
+        ${COMPOSER_AUTH}
+    volumes:
+      - ${MAGENTO_ROOT}:/app
+
+  db:
+    image: mysql:8
+    cap_add:
+      - SYS_NICE
+    environment:
+      MYSQL_ROOT_PASSWORD: "${DB_ROOT_PASSWORD:-root}"
+      MYSQL_DATABASE: "${DB_DATABASE:-magento}"
+      MYSQL_USER: "${DB_USER:-magento}"
+      MYSQL_PASSWORD: "${DB_PASSWORD:-root}"
+    volumes:
+      - db:/var/lib/mysql
+
+  adminer:
+    image: adminer
+    environment:
+        VIRTUAL_HOST: "${ADMINER_SUBDOMAIN_NAME:-adminer}.${WEB_SERVER_NAME}"
+    networks:
+      - nginxproxy_default
+      - default
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.7.1
+    environment:
+      - VIRTUAL_HOST=${ELASTICSEARCH_SUBDOMAIN_NAME:-es}.${WEB_SERVER_NAME}
+      - VIRTUAL_PORT=9200
+      - discovery.type=single-node
+      - http.cors.enabled=true
+      - http.cors.allow-origin=http://localhost:1358,http://127.0.0.1:1358,http://${ESUI_SUBDOMAIN_NAME:-esui}.${WEB_SERVER_NAME}
+      - http.cors.allow-headers=X-Requested-With,X-Auth-Token,Content-Type,Content-Length,Authorization
+      - http.cors.allow-credentials=true
+    volumes:
+      - elasticsearch:/usr/share/elasticsearch/data
+    networks:
+      - nginxproxy_default
+      - default
+
+  redis:
+    image: redis:5.0
+    volumes:
+      - redis:/data
+
+  varnish:
+    build: ./varnish
+    environment:
+        VIRTUAL_HOST: "${WEB_SERVER_NAME:-museonthemove-clone.local}" # For nginxproxy/nginx-proxy
+        LETSENCRYPT_HOST: "${WEB_SERVER_NAME:-museonthemove-clone.local}" # For nginxproxy/nginx-proxy
+    networks:
+      - nginxproxy_default
+      - default
+
+  esui:
+    image: appbaseio/dejavu
+    environment:
+        VIRTUAL_HOST: "${ESUI_SUBDOMAIN_NAME:-esui}.${WEB_SERVER_NAME}"
+    networks:
+      - nginxproxy_default
+      - default
+
+
+  redisui:
+    image: marian/rebrow
+    depends_on:
+      - redis
+    environment:
+        VIRTUAL_HOST: "${REDISUI_SUBDOMAIN_NAME:-redisui}.${WEB_SERVER_NAME}"
+    networks:
+      - nginxproxy_default
+      - default
+
+volumes:
+  elasticsearch:
+  db:
+  redis:
+
+networks:
+        nginxproxy_default:
+                external: true
